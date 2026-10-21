@@ -3,30 +3,11 @@
 from datetime import datetime, timedelta
 
 import pytest
-import time_machine
 
 from appointments.models import Appointment, AppointmentStatus
-from tests.conftest import NAIROBI
+from tests.conftest import NAIROBI, book, cancel
 
-pytestmark = pytest.mark.django_db
-
-NOW = datetime(2026, 10, 26, 7, 0, tzinfo=NAIROBI)
-
-
-@pytest.fixture(autouse=True)
-def frozen_clock():
-    with time_machine.travel(NOW, tick=False):
-        yield
-
-
-def book(api_client, doctor, patient, start_at, **extra):
-    payload = {
-        "doctor_id": doctor.pk,
-        "patient_id": patient.pk,
-        "start_at": start_at,
-        **extra,
-    }
-    return api_client.post("/appointments", payload, format="json")
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("frozen_clock")]
 
 
 def test_books_free_slot(api_client, doctor, patient):
@@ -162,14 +143,8 @@ def test_rejects_slot_overlapping_longer_appointment(
 
 
 def test_cancelled_appointment_frees_slot(api_client, doctor, patient, other_patient):
-    Appointment.objects.create(
-        doctor=doctor,
-        patient=patient,
-        start_at=datetime(2026, 10, 26, 9, 0, tzinfo=NAIROBI),
-        end_at=datetime(2026, 10, 26, 9, 30, tzinfo=NAIROBI),
-        status=AppointmentStatus.CANCELLED,
-        cancelled_at=NOW,
-    )
+    booked = book(api_client, doctor, patient, "2026-10-26T09:00:00+03:00")
+    cancel(api_client, booked.json()["id"])
 
     response = book(api_client, doctor, other_patient, "2026-10-26T09:00:00+03:00")
 

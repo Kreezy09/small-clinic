@@ -11,3 +11,7 @@ class SlotNotBookableError(AppointmentError):
 
 class SlotUnavailableError(AppointmentError):
     """The requested time overlaps another active appointment."""
+
+
+class AppointmentStateError(AppointmentError):
+    """The appointment's status does not allow the requested change."""

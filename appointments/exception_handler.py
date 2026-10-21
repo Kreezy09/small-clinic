@@ -8,6 +8,7 @@ from rest_framework.views import exception_handler
 
 from appointments.exceptions import (
     AppointmentError,
+    AppointmentStateError,
     SlotNotBookableError,
     SlotUnavailableError,
 )
@@ -15,6 +16,7 @@ from appointments.exceptions import (
 STATUS_BY_ERROR: dict[type[AppointmentError], int] = {
     SlotNotBookableError: status.HTTP_422_UNPROCESSABLE_ENTITY,
     SlotUnavailableError: status.HTTP_409_CONFLICT,
+    AppointmentStateError: status.HTTP_409_CONFLICT,
 }
 
 

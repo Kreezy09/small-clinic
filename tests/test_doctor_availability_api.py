@@ -5,12 +5,10 @@ from datetime import datetime
 import pytest
 import time_machine
 
-from appointments.models import Appointment, AppointmentStatus
-from tests.conftest import NAIROBI
+from tests.conftest import NAIROBI, book, cancel
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("frozen_clock")]
 
-NOW = datetime(2026, 10, 26, 7, 0, tzinfo=NAIROBI)
 MONDAY_STARTS = [
     "08:00",
     "08:30",
@@ -24,26 +22,12 @@ MONDAY_STARTS = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def frozen_clock():
-    with time_machine.travel(NOW, tick=False):
-        yield
-
-
 def availability(api_client, doctor, day="2026-10-26"):
     return api_client.get(f"/doctors/{doctor.pk}/availability", {"date": day})
 
 
 def slot_starts(response):
     return [slot["start_at"][11:16] for slot in response.json()["slots"]]
-
-
-def book(api_client, doctor, patient, start_at):
-    return api_client.post(
-        "/appointments",
-        {"doctor_id": doctor.pk, "patient_id": patient.pk, "start_at": start_at},
-        format="json",
-    )
 
 
 def test_lists_every_slot_of_working_hours(api_client, doctor):
@@ -73,14 +57,8 @@ def test_booked_slot_is_not_listed(api_client, doctor, patient):
 
 
 def test_cancelled_appointment_keeps_slot_listed(api_client, doctor, patient):
-    Appointment.objects.create(
-        doctor=doctor,
-        patient=patient,
-        start_at=datetime(2026, 10, 26, 9, 0, tzinfo=NAIROBI),
-        end_at=datetime(2026, 10, 26, 9, 30, tzinfo=NAIROBI),
-        status=AppointmentStatus.CANCELLED,
-        cancelled_at=NOW,
-    )
+    booked = book(api_client, doctor, patient, "2026-10-26T09:00:00+03:00")
+    cancel(api_client, booked.json()["id"])
 
     response = availability(api_client, doctor)
 

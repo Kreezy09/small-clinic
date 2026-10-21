@@ -46,3 +46,9 @@ class AppointmentSerializer(serializers.ModelSerializer):
             start_at=validated_data["start_at"],
             reason=validated_data["reason"],
         )
+
+
+class CancelAppointmentSerializer(serializers.Serializer):
+    """Request body of the cancel endpoint."""
+
+    reason = serializers.CharField(allow_null=True, default=None)
