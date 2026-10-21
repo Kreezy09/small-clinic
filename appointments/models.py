@@ -1,0 +1,219 @@
+"""Appointments between a doctor and a patient, and the rules for booking them."""
+
+from datetime import datetime, timedelta
+from typing import Self
+
+from django.conf import settings
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import DateTimeRangeField, RangeOperators
+from django.db import IntegrityError, models, transaction
+from django.db.models import Func
+from django.utils import timezone
+from psycopg.errors import ExclusionViolation
+
+from appointments.exceptions import SlotNotBookableError, SlotUnavailableError
+from core.models import TimestampedModel
+from doctors.models import Doctor
+from patients.models import Patient
+
+DOCTOR_OVERLAP_CONSTRAINT = "appointments_no_doctor_overlap"
+PATIENT_OVERLAP_CONSTRAINT = "appointments_no_patient_overlap"
+DOCTOR_BUSY_MESSAGE = "The doctor already has an appointment in this slot."
+PATIENT_BUSY_MESSAGE = "The patient already has an appointment at this time."
+OVERLAP_MESSAGES = {
+    DOCTOR_OVERLAP_CONSTRAINT: DOCTOR_BUSY_MESSAGE,
+    PATIENT_OVERLAP_CONSTRAINT: PATIENT_BUSY_MESSAGE,
+}
+
+
+class TsTzRange(Func):
+    """PostgreSQL ``tstzrange(start, end)``, half-open by default."""
+
+    function = "TSTZRANGE"
+    output_field = DateTimeRangeField()
+
+
+class AppointmentStatus(models.TextChoices):
+    """Lifecycle states of an appointment."""
+
+    BOOKED = "BOOKED", "Booked"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+HOLDS_SLOT = ~models.Q(status=AppointmentStatus.CANCELLED)
+
+
+class AppointmentQuerySet(models.QuerySet["Appointment"]):
+    """Query helpers for appointments."""
+
+    def active(self) -> Self:
+        """Return appointments that still hold their slot."""
+        return self.filter(HOLDS_SLOT)
+
+    def overlapping(self, start_at: datetime, end_at: datetime) -> Self:
+        """Return appointments whose time range overlaps ``[start_at, end_at)``."""
+        return self.filter(start_at__lt=end_at, end_at__gt=start_at)
+
+
+class Appointment(TimestampedModel):
+    """A patient's booking of one of a doctor's slots."""
+
+    doctor = models.ForeignKey(
+        Doctor, on_delete=models.PROTECT, related_name="appointments"
+    )
+    patient = models.ForeignKey(
+        Patient, on_delete=models.PROTECT, related_name="appointments"
+    )
+    start_at = models.DateTimeField()
+    end_at = models.DateTimeField()
+    status = models.CharField(
+        max_length=20,
+        choices=AppointmentStatus.choices,
+        default=AppointmentStatus.BOOKED,
+    )
+    reason = models.TextField(null=True, blank=True)
+    cancellation_reason = models.TextField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    objects = AppointmentQuerySet.as_manager()
+
+    class Meta:
+        constraints = (
+            models.CheckConstraint(
+                condition=models.Q(end_at__gt=models.F("start_at")),
+                name="appointments_end_after_start",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=AppointmentStatus.values),
+                name="appointments_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    status=AppointmentStatus.CANCELLED, cancelled_at__isnull=False
+                )
+                | (
+                    ~models.Q(status=AppointmentStatus.CANCELLED)
+                    & models.Q(cancelled_at__isnull=True)
+                ),
+                name="appointments_cancelled_at_matches_status",
+            ),
+            ExclusionConstraint(
+                name=DOCTOR_OVERLAP_CONSTRAINT,
+                expressions=[
+                    ("doctor", RangeOperators.EQUAL),
+                    (TsTzRange("start_at", "end_at"), RangeOperators.OVERLAPS),
+                ],
+                condition=HOLDS_SLOT,
+            ),
+            ExclusionConstraint(
+                name=PATIENT_OVERLAP_CONSTRAINT,
+                expressions=[
+                    ("patient", RangeOperators.EQUAL),
+                    (TsTzRange("start_at", "end_at"), RangeOperators.OVERLAPS),
+                ],
+                condition=HOLDS_SLOT,
+            ),
+        )
+        indexes = (
+            models.Index(
+                fields=["patient", "start_at"], name="appointments_patient_start"
+            ),
+        )
+
+    @classmethod
+    def book(
+        cls, doctor: Doctor, patient: Patient, start_at: datetime, reason: str | None
+    ) -> "Appointment":
+        """Book the doctor's slot starting at ``start_at`` for the patient.
+
+        Args:
+            doctor: Doctor to see.
+            patient: Patient booking the slot.
+            start_at: Timezone-aware start of the slot.
+            reason: Patient's reason for the visit.
+
+        Returns:
+            The saved appointment.
+
+        Raises:
+            SlotNotBookableError: The time is not a bookable slot of the doctor.
+            SlotUnavailableError: The slot overlaps an active appointment of the
+                doctor or the patient.
+        """
+        appointment = cls(doctor=doctor, patient=patient, reason=reason)
+        appointment.assign_slot(start_at)
+        appointment.save_slot()
+        return appointment
+
+    def assign_slot(self, start_at: datetime) -> None:
+        """Validate the doctor's slot starting at ``start_at`` and take its times.
+
+        Args:
+            start_at: Timezone-aware start of the slot.
+
+        Raises:
+            SlotNotBookableError: The time is not a bookable slot of the doctor.
+            SlotUnavailableError: The slot overlaps an active appointment of the
+                doctor or the patient.
+        """
+        if not self.doctor.accepting_appointments:
+            raise SlotNotBookableError("The doctor is not accepting appointments.")
+        ensure_bookable_start(start_at)
+        slot = self.doctor.slot_starting_at(start_at)
+        if slot is None:
+            raise SlotNotBookableError(
+                "The requested time is not a slot within the doctor's working hours."
+            )
+        self.start_at, self.end_at = slot.start, slot.end
+        self.ensure_no_overlap()
+
+    def ensure_no_overlap(self) -> None:
+        """Raise if the assigned slot overlaps another active appointment.
+
+        Raises:
+            SlotUnavailableError: The doctor or the patient is already booked.
+        """
+        clashes = (
+            Appointment.objects.active()
+            .overlapping(self.start_at, self.end_at)
+            .exclude(pk=self.pk)
+        )
+        if clashes.filter(doctor=self.doctor).exists():
+            raise SlotUnavailableError(DOCTOR_BUSY_MESSAGE)
+        if clashes.filter(patient=self.patient).exists():
+            raise SlotUnavailableError(PATIENT_BUSY_MESSAGE)
+
+    def save_slot(self) -> None:
+        """Save the appointment, reporting a concurrent overlap as a domain error.
+
+        Raises:
+            SlotUnavailableError: An overlap constraint rejected the slot.
+        """
+        try:
+            with transaction.atomic():
+                self.save()
+        except IntegrityError as exc:
+            if not isinstance(exc.__cause__, ExclusionViolation):
+                raise
+            raise SlotUnavailableError(
+                OVERLAP_MESSAGES[exc.__cause__.diag.constraint_name]
+            ) from exc
+
+
+def ensure_bookable_start(start_at: datetime) -> None:
+    """Raise if ``start_at`` is in the past or inside the minimum booking lead time.
+
+    Args:
+        start_at: Timezone-aware start of the slot.
+
+    Raises:
+        SlotNotBookableError: The start is too early to book.
+    """
+    now = timezone.now()
+    if start_at < now:
+        raise SlotNotBookableError("Appointments cannot be booked in the past.")
+    if start_at < now + settings.BOOKING_MIN_LEAD_TIME:
+        raise SlotNotBookableError(
+            "Appointments must be booked at least "
+            f"{settings.BOOKING_MIN_LEAD_TIME // timedelta(minutes=1)} minutes ahead."
+        )
