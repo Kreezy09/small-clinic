@@ -15,6 +15,9 @@ RUN uv sync --frozen --no-install-project --no-dev
 
 COPY . .
 
+RUN DJANGO_SECRET_KEY=collectstatic POSTGRES_DB=unused POSTGRES_USER=unused \
+    POSTGRES_PASSWORD=unused python manage.py collectstatic --noinput
+
 RUN useradd --system --no-create-home app
 USER app
 

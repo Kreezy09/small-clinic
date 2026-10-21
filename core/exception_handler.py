@@ -1,4 +1,4 @@
-"""DRF exception handler that maps appointment domain errors to HTTP responses."""
+"""DRF exception handler that maps domain errors to HTTP responses."""
 
 from collections.abc import Mapping
 
@@ -7,16 +7,18 @@ from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
 from appointments.exceptions import (
-    AppointmentError,
     AppointmentStateError,
     SlotNotBookableError,
     SlotUnavailableError,
 )
+from core.exceptions import DomainError
+from patients.exceptions import EmailTakenError
 
-STATUS_BY_ERROR: dict[type[AppointmentError], int] = {
+STATUS_BY_ERROR: dict[type[DomainError], int] = {
     SlotNotBookableError: status.HTTP_422_UNPROCESSABLE_ENTITY,
     SlotUnavailableError: status.HTTP_409_CONFLICT,
     AppointmentStateError: status.HTTP_409_CONFLICT,
+    EmailTakenError: status.HTTP_409_CONFLICT,
 }
 
 
@@ -28,9 +30,9 @@ def handle_exception(exc: Exception, context: Mapping[str, object]) -> Response 
         context: View context supplied by DRF.
 
     Returns:
-        A response for appointment domain errors and DRF exceptions, or ``None``
-        to let other exceptions propagate.
+        A response for domain errors and DRF exceptions, or ``None`` to let
+        other exceptions propagate.
     """
-    if isinstance(exc, AppointmentError):
+    if isinstance(exc, DomainError):
         return Response({"detail": str(exc)}, status=STATUS_BY_ERROR[type(exc)])
     return exception_handler(exc, context)

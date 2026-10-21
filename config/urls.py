@@ -1,5 +1,6 @@
 """Root URL routes of the clinic booking API."""
 
+from django.contrib import admin
 from django.urls import path
 
 from appointments.views import (
@@ -8,9 +9,10 @@ from appointments.views import (
     AppointmentRescheduleView,
 )
 from doctors.views import DoctorAvailabilityView
-from patients.views import PatientAppointmentListView
+from patients.views import PatientAppointmentListView, PatientCreateView
 
 urlpatterns = [
+    path("admin/", admin.site.urls),
     path("appointments", AppointmentCreateView.as_view(), name="appointment-create"),
     path(
         "appointments/<int:pk>/cancel",
@@ -27,6 +29,7 @@ urlpatterns = [
         DoctorAvailabilityView.as_view(),
         name="doctor-availability",
     ),
+    path("patients", PatientCreateView.as_view(), name="patient-create"),
     path(
         "patients/<int:pk>/appointments",
         PatientAppointmentListView.as_view(),

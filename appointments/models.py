@@ -6,7 +6,7 @@ from typing import Self
 from django.conf import settings
 from django.contrib.postgres.constraints import ExclusionConstraint
 from django.contrib.postgres.fields import DateTimeRangeField, RangeOperators
-from django.db import IntegrityError, models, transaction
+from django.db import IntegrityError, connection, models, transaction
 from django.db.models import Func
 from django.utils import timezone
 from psycopg.errors import ExclusionViolation
@@ -128,6 +128,9 @@ class Appointment(TimestampedModel):
             ),
         )
 
+    def __str__(self) -> str:
+        return f"{self.patient} with {self.doctor} at {self.start_at:%Y-%m-%d %H:%M}"
+
     @classmethod
     def available_slots(cls, doctor: Doctor, day: date) -> list[Slot]:
         """Return the doctor's slots on a clinic-local date that can be booked now.
@@ -177,8 +180,10 @@ class Appointment(TimestampedModel):
                 doctor or the patient.
         """
         appointment = cls(doctor=doctor, patient=patient, reason=reason)
-        appointment.assign_slot(start_at)
-        appointment.save_slot()
+        with transaction.atomic():
+            appointment.lock_slot_owners()
+            appointment.assign_slot(start_at)
+            appointment.save_slot()
         return appointment
 
     def cancel(self, reason: str | None) -> None:
@@ -227,8 +232,21 @@ class Appointment(TimestampedModel):
                     "Cancelled appointments cannot be rescheduled."
                 )
             self.doctor = doctor
+            self.lock_slot_owners()
             self.assign_slot(start_at)
             self.save_slot(update_fields=("doctor", "start_at", "end_at", "updated_at"))
+
+    def lock_slot_owners(self) -> None:
+        """Lock the appointment's doctor, then its patient, until the transaction ends.
+
+        Concurrent bookings and reschedules that share the doctor or the patient
+        wait for each other, so each sees the others' committed appointments.
+        """
+        with connection.cursor() as cursor:
+            for key in (f"doctor:{self.doctor_id}", f"patient:{self.patient_id}"):
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key]
+                )
 
     def assign_slot(self, start_at: datetime) -> None:
         """Validate the doctor's slot starting at ``start_at`` and take its times.

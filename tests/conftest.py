@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import time_machine
 from django.contrib.auth import get_user_model
+from django.test import Client
 from rest_framework.test import APIClient
 
 from doctors.models import Doctor, Weekday
@@ -16,9 +17,16 @@ NOW = datetime(2026, 10, 26, 7, 0, tzinfo=NAIROBI)
 
 
 @pytest.fixture(autouse=True)
-def clinic_settings(settings):
+def clinic_settings(settings, tmp_path):
+    settings.STATIC_ROOT = tmp_path
     settings.CLINIC_TIMEZONE = NAIROBI
     settings.BOOKING_MIN_LEAD_TIME = timedelta(hours=1)
+    settings.STORAGES = {
+        **settings.STORAGES,
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"
+        },
+    }
 
 
 @pytest.fixture
@@ -30,6 +38,16 @@ def frozen_clock():
 @pytest.fixture
 def api_client() -> APIClient:
     return APIClient()
+
+
+@pytest.fixture
+def staff_client(db) -> Client:
+    staff = get_user_model().objects.create_superuser(
+        email="staff@example.test", first_name="Sky", last_name="Testadmin"
+    )
+    client = Client()
+    client.force_login(staff)
+    return client
 
 
 def book(api_client, doctor, patient, start_at, **extra):
