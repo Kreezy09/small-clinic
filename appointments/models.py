@@ -58,6 +58,10 @@ class AppointmentQuerySet(models.QuerySet["Appointment"]):
         """Return appointments whose time range overlaps ``[start_at, end_at)``."""
         return self.filter(start_at__lt=end_at, end_at__gt=start_at)
 
+    def upcoming(self) -> Self:
+        """Return active appointments starting now or later, earliest first."""
+        return self.active().filter(start_at__gte=timezone.now()).order_by("start_at")
+
 
 class Appointment(TimestampedModel):
     """A patient's booking of one of a doctor's slots."""
