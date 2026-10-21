@@ -1,6 +1,6 @@
 """Appointments between a doctor and a patient, and the rules for booking them."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Self
 
 from django.conf import settings
@@ -13,7 +13,7 @@ from psycopg.errors import ExclusionViolation
 
 from appointments.exceptions import SlotNotBookableError, SlotUnavailableError
 from core.models import TimestampedModel
-from doctors.models import Doctor
+from doctors.models import Doctor, Slot
 from patients.models import Patient
 
 DOCTOR_OVERLAP_CONSTRAINT = "appointments_no_doctor_overlap"
@@ -121,6 +121,34 @@ class Appointment(TimestampedModel):
         )
 
     @classmethod
+    def available_slots(cls, doctor: Doctor, day: date) -> list[Slot]:
+        """Return the doctor's slots on a clinic-local date that can be booked now.
+
+        Args:
+            doctor: Doctor whose slots to list.
+            day: Date in the clinic time zone.
+
+        Returns:
+            Slots in start order that start no earlier than the minimum booking
+            lead time and overlap no active appointment of the doctor; empty when
+            the doctor is not accepting appointments.
+        """
+        if not doctor.accepting_appointments:
+            return []
+        day_start = datetime.combine(day, time.min, tzinfo=settings.CLINIC_TIMEZONE)
+        booked = list(
+            doctor.appointments.active()
+            .overlapping(day_start, day_start + timedelta(days=1))
+            .values_list("start_at", "end_at")
+        )
+        earliest = earliest_bookable_start()
+        return [
+            slot
+            for slot in doctor.slots_on(day)
+            if slot.start >= earliest and not slot.overlaps_any(booked)
+        ]
+
+    @classmethod
     def book(
         cls, doctor: Doctor, patient: Patient, start_at: datetime, reason: str | None
     ) -> "Appointment":
@@ -209,11 +237,15 @@ def ensure_bookable_start(start_at: datetime) -> None:
     Raises:
         SlotNotBookableError: The start is too early to book.
     """
-    now = timezone.now()
-    if start_at < now:
+    if start_at < timezone.now():
         raise SlotNotBookableError("Appointments cannot be booked in the past.")
-    if start_at < now + settings.BOOKING_MIN_LEAD_TIME:
+    if start_at < earliest_bookable_start():
         raise SlotNotBookableError(
             "Appointments must be booked at least "
             f"{settings.BOOKING_MIN_LEAD_TIME // timedelta(minutes=1)} minutes ahead."
         )
+
+
+def earliest_bookable_start() -> datetime:
+    """Return the earliest start time that can be booked now."""
+    return timezone.now() + settings.BOOKING_MIN_LEAD_TIME

@@ -28,6 +28,10 @@ class Slot:
     start: datetime
     end: datetime
 
+    def overlaps_any(self, ranges: list[tuple[datetime, datetime]]) -> bool:
+        """Return whether the slot overlaps any half-open ``(start, end)`` range."""
+        return any(start < self.end and self.start < end for start, end in ranges)
+
 
 class Doctor(TimestampedModel):
     """Doctor profile of a user, holding the doctor's booking settings."""
