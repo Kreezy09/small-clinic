@@ -13,7 +13,7 @@ The booking system needs five tables: **users**, **doctors**, **patients**, **do
 - **Database:** PostgreSQL with the `btree_gist` extension, chosen for exclusion constraints and `timestamptz`.
 - **Slots are computed, not stored.** Availability = working hours stepped by the doctor's slot length (default 30 min), minus anything that overlaps an active appointment.
 - **Clashes are detected by overlapping time ranges, not by matching start times.** An exclusion constraint rejects two non-cancelled appointments for the same doctor (or the same patient) whose times overlap. This holds for any slot length or break pattern, and under simultaneous requests.
-- **Two layers of enforcement.** The application checks every business rule and returns clear errors. The database constraint is the final guard against races. Constraint errors are wrapped in domain errors that keep the original stack trace, and returned as 409.
+- **Two layers of enforcement.** The application checks every business rule and returns clear errors. Bookings and reschedules first take short transaction-level locks on the doctor and the patient, so concurrent requests that share either queue instead of racing. The database constraint is the final guard. Constraint errors are wrapped in domain errors that keep the original stack trace, and returned as 409.
 - **Times are stored in UTC.** Working hours are stored as local clock times in the clinic's time zone (Africa/Nairobi, UTC+3).
 
 ### Entity-relationship diagram
@@ -173,7 +173,8 @@ A booking is valid only if its start time matches one of these slots. A doctor h
 #### 2. Clashes are found by overlap and enforced in two layers
 
 - **Application:** the booking logic runs every check first and raises domain errors with clear messages (422 for invalid input, 409 for a taken slot). This handles the normal case.
-- **Database:** the exclusion constraints reject any overlap between active appointments for the same doctor or the same patient. They catch the rare case where two requests pass the application check at the same moment. No row locks or retry logic are needed.
+- **Serialization:** two concurrent inserts that conflict on an exclusion constraint can wait on each other inside the constraint check, and PostgreSQL then aborts one with a deadlock error (a 500, not a 409). To prevent that, booking and rescheduling take transaction-level advisory locks on the doctor, then the patient, always in that order, before the application check. Requests sharing a doctor or patient run one after another, the loser sees the winner's row and gets a precise 409, and the fixed order means the locks cannot deadlock each other.
+- **Database:** the exclusion constraints reject any overlap between active appointments for the same doctor or the same patient. They remain the final guard for any write path that skips the locks.
 
 #### 3. Changing slot length or adding breaks needs no migration
 
@@ -216,8 +217,8 @@ An appointment is `BOOKED` when created. It can go to `CANCELLED` once, and `CAN
 
 | Rule | Enforced by | Why there |
 | --- | --- | --- |
-| No overlapping bookings for a doctor | Application pre-check + database exclusion constraint | Must hold even under simultaneous requests |
-| Patient not in two places at once | Application pre-check + database exclusion constraint | Same |
+| No overlapping bookings for a doctor | Advisory lock on the doctor + application pre-check + database exclusion constraint | Must hold even under simultaneous requests, with a 409 rather than a deadlock |
+| Patient not in two places at once | Advisory lock on the patient + application pre-check + database exclusion constraint | Same |
 | An appointment's doctor is a doctor and its patient is a patient | Database (foreign keys to the profile tables) | Free with the profile design |
 | Cancelled rows carry a cancellation time | Database (CHECK) | Cheap, keeps data consistent |
 | Doctor is accepting appointments | Application | A booking rule, not a data shape |
@@ -233,7 +234,7 @@ Each choice favours a stable system: the guarantees keep holding as slot lengths
 | Question | Chosen | Alternatives | Why the chosen option |
 | --- | --- | --- | --- |
 | How to stop double-booking? | Exclusion constraint on overlapping time ranges | Partial unique index on `(doctor_id, start_at)`; a nullable "active start" column with a plain unique constraint; application row locks only | A unique index catches only identical start times, so it breaks once slot lengths change or breaks fall off the 30-min grid. Moving to the exclusion constraint later would mean a full table lock and rewriting the overlap logic. The nullable column stores the start time twice. Row locks rely on every write path remembering them. |
-| Database guard or application only? | Both: application for clear messages, database for races | Application only, with `SELECT … FOR UPDATE` on the doctor row | One forgotten lock silently allows double-bookings. The constraint fails safe. |
+| Database guard or application only? | Both: application for clear messages, advisory locks per doctor and patient to serialize conflicting requests, database constraint as the final guard | Application only, with `SELECT … FOR UPDATE` on the doctor row; constraint only, without locks | One forgotten lock silently allows double-bookings, so the constraint stays as the fail-safe. Without the locks, concurrent conflicting inserts can deadlock inside the constraint check and return 500s. |
 | How to surface constraint errors? | Wrap in a domain error with `from exc`, map to 409 | Let the raw database error bubble up | A raw error is a 500 to the client, which breaks the brief, and it fills the APM tool with expected conflicts. Chaining keeps the full trace. |
 | Where do names and emails live? | On a custom user model, with doctor and patient profiles | Name and email columns on each of `doctors` and `patients`; one users table with a role column; Django multi-table inheritance | Identity is stored once and patient logins later need no data migration. A single table with a role column cannot guarantee `appointments.doctor_id` points at a doctor. Multi-table inheritance hides the join and makes one person holding both roles awkward. |
 | Login identifier | Email (`USERNAME_FIELD`), `username` removed | Keep Django's `username` and copy the email into it | One identifier, no duplicated value to keep in sync. Costs a small custom user manager. |
