@@ -35,3 +35,6 @@ tmp/
 .vscode/
 *.swp
 .DS_Store
+
+# Infrastructure build output
+infra/*.json

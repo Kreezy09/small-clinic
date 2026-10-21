@@ -43,6 +43,7 @@ DATABASES = {
         "PASSWORD": env.str("POSTGRES_PASSWORD"),
         "HOST": env.str("POSTGRES_HOST", default="localhost"),
         "PORT": env.int("POSTGRES_PORT", default=5432),
+        "OPTIONS": {"sslmode": env.str("POSTGRES_SSLMODE", default="prefer")},
     }
 }
 
