@@ -87,3 +87,9 @@ def patient(db) -> Patient:
 @pytest.fixture
 def other_patient(db) -> Patient:
     return create_patient("alex.patient@example.test", "Alex")
+
+
+def reschedule(api_client, appointment_id, **body):
+    return api_client.patch(
+        f"/appointments/{appointment_id}/reschedule", body, format="json"
+    )

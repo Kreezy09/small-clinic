@@ -201,6 +201,31 @@ class Appointment(TimestampedModel):
             raise AppointmentStateError("The appointment is already cancelled.")
         self.refresh_from_db()
 
+    def reschedule(self, start_at: datetime, doctor: Doctor) -> None:
+        """Move the appointment to the doctor's slot starting at ``start_at``.
+
+        The previous slot is freed. The new slot is validated as for a new booking.
+
+        Args:
+            start_at: Timezone-aware start of the new slot.
+            doctor: Doctor of the new slot; may differ from the current doctor.
+
+        Raises:
+            AppointmentStateError: The appointment is cancelled.
+            SlotNotBookableError: The time is not a bookable slot of the doctor.
+            SlotUnavailableError: The slot overlaps another active appointment of
+                the doctor or the patient.
+        """
+        with transaction.atomic():
+            current = Appointment.objects.select_for_update().get(pk=self.pk)
+            if current.status == AppointmentStatus.CANCELLED:
+                raise AppointmentStateError(
+                    "Cancelled appointments cannot be rescheduled."
+                )
+            self.doctor = doctor
+            self.assign_slot(start_at)
+            self.save_slot(update_fields=("doctor", "start_at", "end_at", "updated_at"))
+
     def assign_slot(self, start_at: datetime) -> None:
         """Validate the doctor's slot starting at ``start_at`` and take its times.
 
@@ -239,15 +264,18 @@ class Appointment(TimestampedModel):
         if clashes.filter(patient=self.patient).exists():
             raise SlotUnavailableError(PATIENT_BUSY_MESSAGE)
 
-    def save_slot(self) -> None:
+    def save_slot(self, update_fields: tuple[str, ...] | None = None) -> None:
         """Save the appointment, reporting a concurrent overlap as a domain error.
+
+        Args:
+            update_fields: Fields to write, or ``None`` to write every field.
 
         Raises:
             SlotUnavailableError: An overlap constraint rejected the slot.
         """
         try:
             with transaction.atomic():
-                self.save()
+                self.save(update_fields=update_fields)
         except IntegrityError as exc:
             if not isinstance(exc.__cause__, ExclusionViolation):
                 raise

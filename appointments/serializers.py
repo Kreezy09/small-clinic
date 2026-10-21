@@ -7,6 +7,15 @@ from doctors.models import Doctor
 from patients.models import Patient
 
 
+class CurrentDoctorDefault:
+    """Field default that resolves to the doctor of the serializer's appointment."""
+
+    requires_context = True
+
+    def __call__(self, serializer_field: serializers.Field) -> Doctor:
+        return serializer_field.parent.instance.doctor
+
+
 class AppointmentSerializer(serializers.ModelSerializer):
     """Books an appointment and represents it in responses."""
 
@@ -52,3 +61,12 @@ class CancelAppointmentSerializer(serializers.Serializer):
     """Request body of the cancel endpoint."""
 
     reason = serializers.CharField(allow_null=True, default=None)
+
+
+class RescheduleAppointmentSerializer(serializers.Serializer):
+    """Request body of the reschedule endpoint, bound to the appointment."""
+
+    doctor_id = serializers.PrimaryKeyRelatedField(
+        source="doctor", queryset=Doctor.objects.all(), default=CurrentDoctorDefault()
+    )
+    start_at = serializers.DateTimeField()
