@@ -1,26 +1,26 @@
-"""HTTP endpoints for patients."""
+"""Patient API endpoints."""
 
-from django.shortcuts import get_object_or_404
-from rest_framework import generics
+from rest_framework.decorators import action
+from rest_framework.mixins import CreateModelMixin
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet
 
-from appointments.models import AppointmentQuerySet
 from appointments.serializers import AppointmentSerializer
 from patients.models import Patient
 from patients.serializers import PatientSerializer
 
 
-class PatientCreateView(generics.CreateAPIView):
-    """``POST /patients``: register a patient."""
+class PatientViewSet(CreateModelMixin, GenericViewSet):
+    """Register patients and list their upcoming appointments."""
 
+    queryset = Patient.objects.all()
     serializer_class = PatientSerializer
+    lookup_value_regex = r"\d+"
 
-
-class PatientAppointmentListView(generics.ListAPIView):
-    """``GET /patients/{id}/appointments``: the patient's upcoming appointments."""
-
-    serializer_class = AppointmentSerializer
-
-    def get_queryset(self) -> AppointmentQuerySet:
+    @action(detail=True, methods=["get"])
+    def appointments(self, request: Request, pk: str) -> Response:
         """Return the patient's upcoming appointments, earliest first."""
-        patient = get_object_or_404(Patient, pk=self.kwargs["pk"])
-        return patient.appointments.upcoming()
+        patient = self.get_object()
+        upcoming = patient.appointments.upcoming()
+        return Response(AppointmentSerializer(upcoming, many=True).data)

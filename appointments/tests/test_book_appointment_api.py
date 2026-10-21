@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from appointments.models import Appointment, AppointmentStatus
-from tests.conftest import NAIROBI, book, cancel
+from config.tests.helpers import NAIROBI, book, cancel
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("frozen_clock")]
 

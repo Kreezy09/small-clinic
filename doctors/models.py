@@ -2,14 +2,16 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from itertools import pairwise
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 from core.models import TimestampedModel
+from doctors.exceptions import SlotNotBookableError
 
 
 class Weekday(models.IntegerChoices):
@@ -74,19 +76,68 @@ class Doctor(TimestampedModel):
         ).order_by("start_time")
         return [slot for block in blocks for slot in block.slots_on(day, length)]
 
-    def slot_starting_at(self, start_at: datetime) -> Slot | None:
-        """Return the working-hours slot that starts exactly at ``start_at``.
+    def available_slots(self, day: date) -> list[Slot]:
+        """Return the doctor's slots on a clinic-local date that can be booked now.
 
         Args:
-            start_at: Timezone-aware start time.
+            day: Date in the clinic time zone.
 
         Returns:
-            The matching slot, or ``None`` when no slot starts at that time.
+            Slots in start order that start no earlier than the minimum booking
+            lead time and overlap no active appointment of the doctor; empty when
+            the doctor is not accepting appointments.
         """
-        day = start_at.astimezone(settings.CLINIC_TIMEZONE).date()
-        return next(
-            (slot for slot in self.slots_on(day) if slot.start == start_at), None
+        if not self.accepting_appointments:
+            return []
+        day_start = datetime.combine(day, time.min, tzinfo=settings.CLINIC_TIMEZONE)
+        booked = list(
+            self.appointments.active()
+            .overlapping(day_start, day_start + timedelta(days=1))
+            .values_list("start_at", "end_at")
         )
+        earliest = self.earliest_bookable_start()
+        return [
+            slot
+            for slot in self.slots_on(day)
+            if slot.start >= earliest and not slot.overlaps_any(booked)
+        ]
+
+    def bookable_slot(self, start_at: datetime) -> Slot:
+        """Return the slot starting at ``start_at`` if the doctor can be booked then.
+
+        Args:
+            start_at: Timezone-aware start of the slot.
+
+        Returns:
+            The working-hours slot starting at ``start_at``.
+
+        Raises:
+            SlotNotBookableError: The doctor is not accepting appointments, the
+                start is in the past or inside the lead time, or no slot starts
+                at that time.
+        """
+        if not self.accepting_appointments:
+            raise SlotNotBookableError("The doctor is not accepting appointments.")
+        if start_at < timezone.now():
+            raise SlotNotBookableError("Appointments cannot be booked in the past.")
+        if start_at < self.earliest_bookable_start():
+            raise SlotNotBookableError(
+                "Appointments must be booked at least "
+                f"{settings.BOOKING_MIN_LEAD_TIME // timedelta(minutes=1)} "
+                "minutes ahead."
+            )
+        day = start_at.astimezone(settings.CLINIC_TIMEZONE).date()
+        slot = next((s for s in self.slots_on(day) if s.start == start_at), None)
+        if slot is None:
+            raise SlotNotBookableError(
+                "The requested time is not a slot within the doctor's working hours."
+            )
+        return slot
+
+    @staticmethod
+    def earliest_bookable_start() -> datetime:
+        """Return the earliest start time that can be booked now."""
+        return timezone.now() + settings.BOOKING_MIN_LEAD_TIME
 
 
 class DoctorWorkingHours(TimestampedModel):

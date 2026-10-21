@@ -1,8 +1,10 @@
-"""HTTP endpoints for appointments."""
+"""Appointment API endpoints."""
 
-from rest_framework import generics
+from rest_framework.decorators import action
+from rest_framework.mixins import CreateModelMixin
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet
 
 from appointments.models import Appointment
 from appointments.serializers import (
@@ -12,35 +14,31 @@ from appointments.serializers import (
 )
 
 
-class AppointmentCreateView(generics.CreateAPIView):
-    """``POST /appointments``: book a doctor's slot for a patient."""
-
-    serializer_class = AppointmentSerializer
-
-
-class AppointmentCancelView(generics.GenericAPIView):
-    """``PATCH /appointments/{id}/cancel``: cancel an appointment with a reason."""
+class AppointmentViewSet(CreateModelMixin, GenericViewSet):
+    """Book, cancel and reschedule appointments."""
 
     queryset = Appointment.objects.all()
-    serializer_class = CancelAppointmentSerializer
+    serializer_class = AppointmentSerializer
+    lookup_value_regex = r"\d+"
 
-    def patch(self, request: Request, pk: int) -> Response:
-        """Cancel the appointment and return it."""
+    @action(
+        detail=True, methods=["patch"], serializer_class=CancelAppointmentSerializer
+    )
+    def cancel(self, request: Request, pk: str) -> Response:
+        """Cancel the appointment with an optional reason and return it."""
         appointment = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         appointment.cancel(serializer.validated_data["reason"])
         return Response(AppointmentSerializer(appointment).data)
 
-
-class AppointmentRescheduleView(generics.GenericAPIView):
-    """``PATCH /appointments/{id}/reschedule``: move an appointment to a new slot."""
-
-    queryset = Appointment.objects.all()
-    serializer_class = RescheduleAppointmentSerializer
-
-    def patch(self, request: Request, pk: int) -> Response:
-        """Reschedule the appointment and return it."""
+    @action(
+        detail=True,
+        methods=["patch"],
+        serializer_class=RescheduleAppointmentSerializer,
+    )
+    def reschedule(self, request: Request, pk: str) -> Response:
+        """Move the appointment to a new slot and return it."""
         appointment = self.get_object()
         serializer = self.get_serializer(appointment, data=request.data)
         serializer.is_valid(raise_exception=True)

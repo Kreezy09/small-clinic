@@ -3,7 +3,7 @@
 import pytest
 
 from appointments.models import Appointment, AppointmentStatus
-from tests.conftest import NOW, book, cancel
+from config.tests.helpers import NOW, book, cancel
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("frozen_clock")]
 
