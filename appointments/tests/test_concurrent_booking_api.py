@@ -7,7 +7,7 @@ import pytest
 from django.db import connection
 from rest_framework.test import APIClient
 
-from tests.conftest import create_patient
+from config.tests.helpers import create_patient
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),

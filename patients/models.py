@@ -2,13 +2,9 @@
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, models, transaction
-from psycopg.errors import UniqueViolation
+from django.db import models, transaction
 
 from core.models import TimestampedModel
-from patients.exceptions import EmailTakenError
-
-EMAIL_UNIQUE_CONSTRAINT = "accounts_user_email_key"
 
 
 class Patient(TimestampedModel):
@@ -42,17 +38,8 @@ class Patient(TimestampedModel):
         Raises:
             EmailTakenError: Another user already has the email.
         """
-        try:
-            with transaction.atomic():
-                user = get_user_model().objects.create_user(
-                    email=email, first_name=first_name, last_name=last_name, phone=phone
-                )
-                return cls.objects.create(user=user)
-        except IntegrityError as exc:
-            cause = exc.__cause__
-            if not (
-                isinstance(cause, UniqueViolation)
-                and cause.diag.constraint_name == EMAIL_UNIQUE_CONSTRAINT
-            ):
-                raise
-            raise EmailTakenError("A user with this email already exists.") from exc
+        with transaction.atomic():
+            user = get_user_model().objects.create_user(
+                email=email, first_name=first_name, last_name=last_name, phone=phone
+            )
+            return cls.objects.create(user=user)

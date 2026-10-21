@@ -2,3 +2,5 @@
 max-line-length = 88
 extend-ignore = E203,E701
 extend-exclude = .venv,migrations
+per-file-ignores =
+    config/settings/settings.py:F401,F403

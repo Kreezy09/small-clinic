@@ -1,20 +1,22 @@
-"""HTTP endpoints for doctors."""
+"""Doctor API endpoints."""
 
-from rest_framework import generics
+from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet
 
-from appointments.models import Appointment
 from doctors.models import Doctor
 from doctors.serializers import AvailabilityQuerySerializer, AvailabilitySerializer
 
 
-class DoctorAvailabilityView(generics.GenericAPIView):
-    """``GET /doctors/{id}/availability?date=YYYY-MM-DD``: list bookable slots."""
+class DoctorViewSet(GenericViewSet):
+    """Doctor scheduling endpoints."""
 
     queryset = Doctor.objects.all()
+    lookup_value_regex = r"\d+"
 
-    def get(self, request: Request, pk: int) -> Response:
+    @action(detail=True, methods=["get"])
+    def availability(self, request: Request, pk: str) -> Response:
         """Return the doctor's bookable slots on the requested clinic-local date."""
         doctor = self.get_object()
         query = AvailabilityQuerySerializer(data=request.query_params)
@@ -23,6 +25,6 @@ class DoctorAvailabilityView(generics.GenericAPIView):
         availability = {
             "doctor_id": doctor.pk,
             "date": day,
-            "slots": Appointment.available_slots(doctor, day),
+            "slots": doctor.available_slots(day),
         }
         return Response(AvailabilitySerializer(availability).data)

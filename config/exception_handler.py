@@ -6,13 +6,10 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
-from appointments.exceptions import (
-    AppointmentStateError,
-    SlotNotBookableError,
-    SlotUnavailableError,
-)
+from accounts.exceptions import EmailTakenError
+from appointments.exceptions import AppointmentStateError, SlotUnavailableError
 from core.exceptions import DomainError
-from patients.exceptions import EmailTakenError
+from doctors.exceptions import SlotNotBookableError
 
 STATUS_BY_ERROR: dict[type[DomainError], int] = {
     SlotNotBookableError: status.HTTP_422_UNPROCESSABLE_ENTITY,
