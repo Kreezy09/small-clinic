@@ -6,6 +6,13 @@ from rest_framework import generics
 from appointments.models import AppointmentQuerySet
 from appointments.serializers import AppointmentSerializer
 from patients.models import Patient
+from patients.serializers import PatientSerializer
+
+
+class PatientCreateView(generics.CreateAPIView):
+    """``POST /patients``: register a patient."""
+
+    serializer_class = PatientSerializer
 
 
 class PatientAppointmentListView(generics.ListAPIView):

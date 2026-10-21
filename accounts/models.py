@@ -28,6 +28,23 @@ class UserManager(BaseUserManager["User"]):
         user.save(using=self._db)
         return user
 
+    def create_superuser(
+        self, email: str, password: str | None = None, **extra_fields: str | bool | None
+    ) -> "User":
+        """Create and save a staff superuser.
+
+        Args:
+            email: Login email; its domain is normalized to lower case.
+            password: Raw password, or ``None`` to store an unusable password.
+            **extra_fields: Other ``User`` field values.
+
+        Returns:
+            The saved user.
+        """
+        return self.create_user(
+            email, password, is_staff=True, is_superuser=True, **extra_fields
+        )
+
 
 class User(AbstractUser):
     """A person known to the clinic, identified and logged in by email."""

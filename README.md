@@ -206,7 +206,13 @@ An appointment is `BOOKED` when created. It can go to `CANCELLED` once, and `CAN
 - **Two separate flags.** `users.is_active` controls whether someone can log in. `doctors.accepting_appointments` controls whether a doctor can be booked.
 - **Profiles guarantee roles.** `appointments.doctor_id` points at `doctors`, so the database guarantees it is a doctor; the same holds for patients.
 
-#### 9. Where each rule is enforced
+#### 9. Staff use the Django admin; patients register through the API
+
+- **Doctors and working hours** are managed by staff in the Django admin at `/admin/`, behind a staff login. Working-hours blocks that overlap on the same weekday are rejected. Changing hours never touches existing bookings.
+- **Appointments are view-only in the admin.** Every change goes through the API so the booking rules always apply.
+- **Patients register themselves** with `POST /patients`, which creates the user (without a usable password) and the patient profile in one transaction. An email already used by any user returns 409.
+
+#### 10. Where each rule is enforced
 
 | Rule | Enforced by | Why there |
 | --- | --- | --- |
@@ -216,6 +222,7 @@ An appointment is `BOOKED` when created. It can go to `CANCELLED` once, and `CAN
 | Cancelled rows carry a cancellation time | Database (CHECK) | Cheap, keeps data consistent |
 | Doctor is accepting appointments | Application | A booking rule, not a data shape |
 | Slot inside working hours | Application | Needs a lookup in another table, which a CHECK cannot do |
+| A doctor's working-hours blocks do not overlap | Application (admin form validation) | Spans several rows of the same doctor |
 | Start time matches a generated slot | Application | Depends on the doctor's current slot length |
 | Not in the past, at least 1 hour ahead | Application | Depends on the current time, which changes |
 
@@ -250,6 +257,7 @@ Each of the two exclusion constraints builds a GiST index, which also serves ove
 | `POST /appointments` | Check the slot, then insert the appointment | Both exclusion constraints (pre-check and final guard) |
 | `PATCH /appointments/{id}/cancel` | Load by id, set status, time and optional reason | Primary key |
 | `PATCH /appointments/{id}/reschedule` | Load by id, check the new slot (possibly with another doctor), update doctor and times | Primary key; both exclusion constraints |
+| `POST /patients` | Insert the user and the patient profile in one transaction | `UNIQUE (email)` on users; a duplicate returns 409 |
 | `GET /patients/{id}/appointments` (bonus) | Active rows for the patient with `start_at >= now()`, ordered by `start_at` | `(patient_id, start_at)`: already in date order, so no sort is needed. A GiST index does not return rows in order. |
 
 ### Growth path
@@ -268,7 +276,7 @@ Slot-length changes and recurring breaks already work without a schema change. E
 
 ### Open questions
 
-- [ ] Must a patient already exist before booking, or should `POST /appointments` create the patient and its user from the details sent?
+- [x] Must a patient already exist before booking? Yes: patients register with `POST /patients` and book with the returned id.
 - [ ] What happens to existing bookings that fall outside a doctor's new working hours? Proposed: keep them and flag them for staff, never cancel them automatically.
 - [ ] May a patient hold more than one upcoming appointment with the same doctor?
 - [ ] Does the production database host allow the `btree_gist` extension? (Standard on major managed Postgres services; confirm once at setup.)

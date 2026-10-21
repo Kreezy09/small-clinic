@@ -128,6 +128,9 @@ class Appointment(TimestampedModel):
             ),
         )
 
+    def __str__(self) -> str:
+        return f"{self.patient} with {self.doctor} at {self.start_at:%Y-%m-%d %H:%M}"
+
     @classmethod
     def available_slots(cls, doctor: Doctor, day: date) -> list[Slot]:
         """Return the doctor's slots on a clinic-local date that can be booked now.

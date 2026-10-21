@@ -1,7 +1,9 @@
 """Domain errors raised by appointment operations."""
 
+from core.exceptions import DomainError
 
-class AppointmentError(Exception):
+
+class AppointmentError(DomainError):
     """Base class for appointment rule violations."""
 
 

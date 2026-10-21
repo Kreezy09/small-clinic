@@ -1,9 +1,12 @@
 """Doctors, their weekly working hours, and the bookable slots derived from them."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from itertools import pairwise
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from core.models import TimestampedModel
@@ -52,6 +55,9 @@ class Doctor(TimestampedModel):
                 name="doctors_slot_minutes_positive",
             ),
         )
+
+    def __str__(self) -> str:
+        return str(self.user)
 
     def slots_on(self, day: date) -> list[Slot]:
         """Return every slot of the doctor's working hours on a clinic-local date.
@@ -108,6 +114,30 @@ class DoctorWorkingHours(TimestampedModel):
                 name="doctor_working_hours_end_after_start",
             ),
         )
+
+    @staticmethod
+    def ensure_no_overlap(blocks: Iterable["DoctorWorkingHours"]) -> None:
+        """Raise if any two blocks of one doctor overlap on the same weekday.
+
+        Args:
+            blocks: Every working-hours block of one doctor.
+
+        Raises:
+            ValidationError: Two blocks share a weekday and overlap in time.
+        """
+        ordered = sorted(
+            blocks, key=lambda block: (block.iso_weekday, block.start_time)
+        )
+        for earlier, later in pairwise(ordered):
+            if (
+                earlier.iso_weekday == later.iso_weekday
+                and later.start_time < earlier.end_time
+            ):
+                raise ValidationError(
+                    f"Working hours overlap on {Weekday(later.iso_weekday).label}: "
+                    f"{earlier.start_time:%H:%M}-{earlier.end_time:%H:%M} and "
+                    f"{later.start_time:%H:%M}-{later.end_time:%H:%M}."
+                )
 
     def slots_on(self, day: date, length: timedelta) -> list[Slot]:
         """Split this block into consecutive slots on a date.
