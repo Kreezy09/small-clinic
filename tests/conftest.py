@@ -1,9 +1,10 @@
 """Shared fixtures: clinic settings, an API client, synthetic doctors and patients."""
 
-from datetime import time, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+import time_machine
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
@@ -11,6 +12,7 @@ from doctors.models import Doctor, Weekday
 from patients.models import Patient
 
 NAIROBI = ZoneInfo("Africa/Nairobi")
+NOW = datetime(2026, 10, 26, 7, 0, tzinfo=NAIROBI)
 
 
 @pytest.fixture(autouse=True)
@@ -20,8 +22,30 @@ def clinic_settings(settings):
 
 
 @pytest.fixture
+def frozen_clock():
+    with time_machine.travel(NOW, tick=False):
+        yield
+
+
+@pytest.fixture
 def api_client() -> APIClient:
     return APIClient()
+
+
+def book(api_client, doctor, patient, start_at, **extra):
+    payload = {
+        "doctor_id": doctor.pk,
+        "patient_id": patient.pk,
+        "start_at": start_at,
+        **extra,
+    }
+    return api_client.post("/appointments", payload, format="json")
+
+
+def cancel(api_client, appointment_id, **body):
+    return api_client.patch(
+        f"/appointments/{appointment_id}/cancel", body, format="json"
+    )
 
 
 def create_doctor(email: str, first_name: str) -> Doctor:

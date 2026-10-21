@@ -11,7 +11,11 @@ from django.db.models import Func
 from django.utils import timezone
 from psycopg.errors import ExclusionViolation
 
-from appointments.exceptions import SlotNotBookableError, SlotUnavailableError
+from appointments.exceptions import (
+    AppointmentStateError,
+    SlotNotBookableError,
+    SlotUnavailableError,
+)
 from core.models import TimestampedModel
 from doctors.models import Doctor, Slot
 from patients.models import Patient
@@ -172,6 +176,30 @@ class Appointment(TimestampedModel):
         appointment.assign_slot(start_at)
         appointment.save_slot()
         return appointment
+
+    def cancel(self, reason: str | None) -> None:
+        """Cancel the appointment, freeing its slot.
+
+        Args:
+            reason: Why the appointment was cancelled.
+
+        Raises:
+            AppointmentStateError: The appointment is already cancelled.
+        """
+        now = timezone.now()
+        cancelled = (
+            Appointment.objects.active()
+            .filter(pk=self.pk)
+            .update(
+                status=AppointmentStatus.CANCELLED,
+                cancellation_reason=reason,
+                cancelled_at=now,
+                updated_at=now,
+            )
+        )
+        if not cancelled:
+            raise AppointmentStateError("The appointment is already cancelled.")
+        self.refresh_from_db()
 
     def assign_slot(self, start_at: datetime) -> None:
         """Validate the doctor's slot starting at ``start_at`` and take its times.
