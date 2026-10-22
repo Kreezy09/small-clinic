@@ -11,7 +11,9 @@ from django.utils import timezone
 
 from appointments.mixins.booking import (
     DOCTOR_OVERLAP_CONSTRAINT,
+    DOCTOR_START_CONSTRAINT,
     PATIENT_OVERLAP_CONSTRAINT,
+    PATIENT_START_CONSTRAINT,
     AppointmentBookingMixin,
 )
 from appointments.mixins.lifecycle import AppointmentLifecycleMixin
@@ -111,6 +113,16 @@ class Appointment(AppointmentBookingMixin, AppointmentLifecycleMixin, Timestampe
                     & models.Q(cancelled_at__isnull=True)
                 ),
                 name="appointments_cancelled_at_matches_status",
+            ),
+            models.UniqueConstraint(
+                fields=["doctor", "start_at"],
+                condition=HOLDS_SLOT,
+                name=DOCTOR_START_CONSTRAINT,
+            ),
+            models.UniqueConstraint(
+                fields=["patient", "start_at"],
+                condition=HOLDS_SLOT,
+                name=PATIENT_START_CONSTRAINT,
             ),
             ExclusionConstraint(
                 name=DOCTOR_OVERLAP_CONSTRAINT,

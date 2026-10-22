@@ -46,6 +46,5 @@ class AppointmentLifecycleMixin:
                     "Cancelled appointments cannot be rescheduled."
                 )
             self.doctor = doctor
-            self.lock_slot_owners()
             self.assign_slot(start_at)
             self.save_slot(update_fields=("doctor", "start_at", "end_at", "updated_at"))
