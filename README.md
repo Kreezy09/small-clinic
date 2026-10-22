@@ -314,27 +314,27 @@ Each doctor operates in 30-minute slots Monday through Friday with a 1-hour lunc
 
 | ID | Doctor | Email | Slot Length | Working Days & Hours |
 |---|---|---|---|---|
-| `1` | Dr. Stephen Strange | `stephen.strange@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
-| `2` | Dr. Bruce Banner | `bruce.banner@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
-| `3` | Dr. Harleen Quinzel | `harleen.quinzel@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
-| `4` | Dr. Charles Xavier | `charles.xavier@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
-| `5` | Dr. Caitlyn Snow | `caitlyn.snow@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `10` | Dr. Stephen Strange | `stephen.strange@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `11` | Dr. Bruce Banner | `bruce.banner@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `12` | Dr. Harleen Quinzel | `harleen.quinzel@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `13` | Dr. Charles Xavier | `charles.xavier@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `14` | Dr. Caitlyn Snow | `caitlyn.snow@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
 
 ### Patients
 
 | ID | Patient | Email | Phone |
 |---|---|---|---|
-| `1` | Peter Parker | `peter.parker@patient.test` | `+254711000001` |
-| `2` | Clark Kent | `clark.kent@patient.test` | `+254722000002` |
-| `3` | Diana Prince | `diana.prince@patient.test` | `+254733000003` |
-| `4` | Tony Stark | `tony.stark@patient.test` | `+254744000004` |
-| `5` | Hal Jordan | `hal.jordan@patient.test` | `+254755000005` |
+| `15` | Peter Parker | `peter.parker@patient.test` | `+254711000001` |
+| `16` | Clark Kent | `clark.kent@patient.test` | `+254722000002` |
+| `17` | Diana Prince | `diana.prince@patient.test` | `+254733000003` |
+| `18` | Tony Stark | `tony.stark@patient.test` | `+254744000004` |
+| `19` | Hal Jordan | `hal.jordan@patient.test` | `+254755000005` |
 
 ### Example API Requests
 
 #### 1. Check availability for Dr. Stephen Strange
 ```bash
-GET /doctors/1/availability?date=2026-10-26
+GET /doctors/10/availability?date=2026-10-26
 ```
 
 #### 2. Book an appointment for Peter Parker with Dr. Strange
@@ -343,8 +343,8 @@ POST /appointments
 Content-Type: application/json
 
 {
-  "doctor_id": 1,
-  "patient_id": 1,
+  "doctor_id": 10,
+  "patient_id": 15,
   "start_at": "2026-10-26T09:00:00+03:00",
   "reason": "Persistent headaches and fatigue"
 }
@@ -356,7 +356,7 @@ PATCH /appointments/{id}/reschedule
 Content-Type: application/json
 
 {
-  "doctor_id": 2,
+  "doctor_id": 11,
   "start_at": "2026-10-26T14:00:00+03:00"
 }
 ```
@@ -373,6 +373,6 @@ Content-Type: application/json
 
 #### 5. View upcoming appointments for Peter Parker
 ```bash
-GET /patients/1/appointments
+GET /patients/15/appointments
 ```
 
