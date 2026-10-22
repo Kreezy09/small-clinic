@@ -282,3 +282,79 @@ Slot-length changes and recurring breaks already work without a schema change. E
 - [ ] What happens to existing bookings that fall outside a doctor's new working hours? Proposed: keep them and flag them for staff, never cancel them automatically.
 - [ ] May a patient hold more than one upcoming appointment with the same doctor?
 - [ ] Does the production database host allow the `btree_gist` extension? (Standard on major managed Postgres services; confirm once at setup.)
+
+## Sample data
+
+The application can be tested with the below data:
+
+### Doctors
+
+Each doctor operates in 30-minute slots Monday through Friday with a 1-hour lunch break:
+- **Morning shift:** `08:00 – 12:30` (9 bookable slots: 08:00, 08:30, 09:00, 09:30, 10:00, 10:30, 11:00, 11:30, 12:00)
+- **Lunch break:** `12:30 – 13:30` (clinic closed for appointments)
+- **Afternoon shift:** `13:30 – 17:00` (7 bookable slots: 13:30, 14:00, 14:30, 15:00, 15:30, 16:00, 16:30)
+
+| ID | Doctor | Email | Slot Length | Working Days & Hours |
+|---|---|---|---|---|
+| `1` | Dr. Stephen Strange | `stephen.strange@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `2` | Dr. Bruce Banner | `bruce.banner@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `3` | Dr. Harleen Quinzel | `harleen.quinzel@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `4` | Dr. Charles Xavier | `charles.xavier@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+| `5` | Dr. Caitlyn Snow | `caitlyn.snow@clinic.test` | 30 mins | Mon–Fri: 08:00–12:30, 13:30–17:00 |
+
+### Patients
+
+| ID | Patient | Email | Phone |
+|---|---|---|---|
+| `1` | Peter Parker | `peter.parker@patient.test` | `+254711000001` |
+| `2` | Clark Kent | `clark.kent@patient.test` | `+254722000002` |
+| `3` | Diana Prince | `diana.prince@patient.test` | `+254733000003` |
+| `4` | Tony Stark | `tony.stark@patient.test` | `+254744000004` |
+| `5` | Hal Jordan | `hal.jordan@patient.test` | `+254755000005` |
+
+### Example API Requests
+
+#### 1. Check availability for Dr. Stephen Strange
+```bash
+GET /doctors/1/availability?date=2026-10-26
+```
+
+#### 2. Book an appointment for Peter Parker with Dr. Strange
+```bash
+POST /appointments
+Content-Type: application/json
+
+{
+  "doctor_id": 1,
+  "patient_id": 1,
+  "start_at": "2026-10-26T09:00:00+03:00",
+  "reason": "Persistent headaches and fatigue"
+}
+```
+
+#### 3. Reschedule the appointment to Dr. Bruce Banner
+```bash
+PATCH /appointments/{id}/reschedule
+Content-Type: application/json
+
+{
+  "doctor_id": 2,
+  "start_at": "2026-10-26T14:00:00+03:00"
+}
+```
+
+#### 4. Cancel the appointment
+```bash
+PATCH /appointments/{id}/cancel
+Content-Type: application/json
+
+{
+  "reason": "Feeling better"
+}
+```
+
+#### 5. View upcoming appointments for Peter Parker
+```bash
+GET /patients/1/appointments
+```
+
