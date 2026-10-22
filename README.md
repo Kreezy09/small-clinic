@@ -4,6 +4,24 @@ A REST API for booking appointments at a small clinic with 5 doctors. Each docto
 
 Built with Django REST Framework on PostgreSQL.
 
+## Deployment
+
+**Live API:** https://small-clinic-api.wittymoss-bcfad0cd.southafricanorth.azurecontainerapps.io (staff admin at `/admin/`)
+
+The API scales to zero when idle, so the first request after a quiet period can take 10–20 seconds.
+
+### What triggers a deployment
+
+A push to `main` deploys. Work is committed to `staging` and merged into `main` through a pull request; the merge starts the `ci-cd` workflow, and its deploy job runs only for `main`. The workflow can also be run manually on `main` from the GitHub Actions tab. Pushes to `staging` and pull requests into `main` run the checks and tests but do not deploy.
+
+### Pipeline
+
+The pipeline is defined in `.github/workflows/ci-cd.yml` and has three jobs:
+
+1. **test** runs on every push to `main` or `staging` and every pull request into `main`. It starts PostgreSQL 18, installs the pinned dependencies with `uv`, checks formatting (isort, black), lint (ruff, flake8), complexity (radon) and that migrations are up to date, then runs the pytest suite against PostgreSQL.
+2. **build** runs on `main` after the tests pass. It builds the Docker image and pushes it to Docker Hub as `kreezy09/small-clinic:<commit-sha>` and `:latest`.
+3. **deploy** runs on `main` after the build, in the `production` GitHub environment. It signs in to Azure with OIDC (no stored Azure credentials) and applies `infra/main.bicep` with the new image tag. That template defines the Azure Container Apps API and an Azure Database for PostgreSQL 18 Flexible Server. The container applies migrations on startup, then the job smoke-tests the live URL.
+
 ## System design
 
 ### Summary
