@@ -46,6 +46,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
             "cancellation_reason",
             "cancelled_at",
         )
+        validators = ()
 
     def create(self, validated_data: dict[str, object]) -> Appointment:
         """Book the appointment described by the validated request."""

@@ -13,7 +13,7 @@ The booking system needs five tables: **users**, **doctors**, **patients**, **do
 - **Database:** PostgreSQL with the `btree_gist` extension, chosen for exclusion constraints and `timestamptz`.
 - **Slots are computed, not stored.** Availability = working hours stepped by the doctor's slot length (default 30 min), minus anything that overlaps an active appointment.
 - **Clashes are detected by overlapping time ranges, not by matching start times.** An exclusion constraint rejects two non-cancelled appointments for the same doctor (or the same patient) whose times overlap. This holds for any slot length or break pattern, and under simultaneous requests.
-- **Two layers of enforcement.** The application checks every business rule and returns clear errors. Bookings and reschedules first take short transaction-level locks on the doctor and the patient, so concurrent requests that share either queue instead of racing. The database constraint is the final guard. Constraint errors are wrapped in domain errors that keep the original stack trace, and returned as 409.
+- **Two layers of enforcement.** The application checks every business rule and returns clear errors. At the database level, conditional B-tree unique constraints on `(doctor_id, start_at)` and `(patient_id, start_at)` serialize concurrent bookings for the same slot without deadlocking, and GiST exclusion constraints reject any partial range overlap. Constraint errors are wrapped in domain errors that keep the original stack trace, and returned as 409.
 - **Times are stored in UTC.** Working hours are stored as local clock times in the clinic's time zone (Africa/Nairobi, UTC+3).
 
 ### Entity-relationship diagram
@@ -136,7 +136,9 @@ One row per booking. Rows are never deleted. Cancelling changes the status, and 
 
 Table constraints and indexes:
 
-- `appointments_no_doctor_overlap`: `EXCLUDE USING gist (doctor_id WITH =, tstzrange(start_at, end_at) WITH &&) WHERE (status <> 'CANCELLED')`. A doctor cannot have two active appointments whose times overlap. This is the double-booking guard.
+- `appointments_unique_doctor_start`: `UNIQUE (doctor_id, start_at) WHERE (status <> 'CANCELLED')`. Locks only the specific `(doctor_id, start_at)` B-tree key during concurrent inserts so same-slot races resolve without GiST deadlocks.
+- `appointments_unique_patient_start`: `UNIQUE (patient_id, start_at) WHERE (status <> 'CANCELLED')`. Same slot-start guard for the patient.
+- `appointments_no_doctor_overlap`: `EXCLUDE USING gist (doctor_id WITH =, tstzrange(start_at, end_at) WITH &&) WHERE (status <> 'CANCELLED')`. A doctor cannot have two active appointments whose times overlap, even when start times differ.
 - `appointments_no_patient_overlap`: the same constraint on `patient_id`. A patient cannot be booked in two places at once.
 - `CHECK ((status = 'CANCELLED') = (cancelled_at IS NOT NULL))`: a cancelled row always has a cancellation time, and a booked row never does. The reason is optional.
 - `INDEX (patient_id, start_at)`: serves the patient's upcoming appointments in date order.
@@ -173,8 +175,7 @@ A booking is valid only if its start time matches one of these slots. A doctor h
 #### 2. Clashes are found by overlap and enforced in two layers
 
 - **Application:** the booking logic runs every check first and raises domain errors with clear messages (422 for invalid input, 409 for a taken slot). This handles the normal case.
-- **Serialization:** two concurrent inserts that conflict on an exclusion constraint can wait on each other inside the constraint check, and PostgreSQL then aborts one with a deadlock error (a 500, not a 409). To prevent that, booking and rescheduling take transaction-level advisory locks on the doctor, then the patient, always in that order, before the application check. Requests sharing a doctor or patient run one after another, the loser sees the winner's row and gets a precise 409, and the fixed order means the locks cannot deadlock each other.
-- **Database:** the exclusion constraints reject any overlap between active appointments for the same doctor or the same patient. They remain the final guard for any write path that skips the locks.
+- **Database:** conditional B-tree unique constraints on `(doctor_id, start_at)` and `(patient_id, start_at)` are created before the GiST exclusion constraints. Because PostgreSQL checks indexes in creation (OID) order and locks B-tree keys before inserting, concurrent requests for the same slot serialize on that single slot key without locking the whole doctor or patient row and without GiST deadlocks. The GiST exclusion constraints follow immediately after to reject any partial time-range overlap when slot lengths change.
 
 #### 3. Changing slot length or adding breaks needs no migration
 
@@ -183,7 +184,7 @@ A booking is valid only if its start time matches one of these slots. A doctor h
 
 #### 4. Error handling keeps the stack trace
 
-A constraint violation (SQLSTATE `23P01`) is caught at the database boundary and re-raised as a domain error with the original chained: `raise SlotUnavailableError(...) from exc`. The APM tool records the full chain, and one global handler maps the domain error to 409. Clients never get a raw 500 for a taken slot, and the constraint name tells a doctor clash from a patient clash.
+A constraint violation (SQLSTATE `23505` or `23P01`) is caught at the database boundary and re-raised as a domain error with the original chained: `raise SlotUnavailableError(...) from exc`. The APM tool records the full chain, and one global handler maps the domain error to 409. Clients never get a raw 500 for a taken slot, and the constraint name tells a doctor clash from a patient clash.
 
 #### 5. Time handling
 
@@ -202,7 +203,7 @@ An appointment is `BOOKED` when created. It can go to `CANCELLED` once, and `CAN
 #### 8. People are users with role profiles
 
 - **Identity lives once, on the user.** Name, email and phone are stored on `accounts.User`. `doctors` and `patients` hold only role-specific data, keyed by `user_id`.
-- **Email is the login.** The custom user model removes `username` and sets `email` as `USERNAME_FIELD`, with a small custom manager for creating users.
+- **Email is the login.** The custom user model removes `username` and sets `email` as `USERNAME_FIELD`, with a small custom user manager for creating users.
 - **No logins yet.** Doctors and patients are created with an unusable password. Creating a patient creates its user in the same transaction.
 - **Two separate flags.** `users.is_active` controls whether someone can log in. `doctors.accepting_appointments` controls whether a doctor can be booked.
 - **Profiles guarantee roles.** `appointments.doctor_id` points at `doctors`, so the database guarantees it is a doctor; the same holds for patients.
@@ -217,8 +218,8 @@ An appointment is `BOOKED` when created. It can go to `CANCELLED` once, and `CAN
 
 | Rule | Enforced by | Why there |
 | --- | --- | --- |
-| No overlapping bookings for a doctor | Advisory lock on the doctor + application pre-check + database exclusion constraint | Must hold even under simultaneous requests, with a 409 rather than a deadlock |
-| Patient not in two places at once | Advisory lock on the patient + application pre-check + database exclusion constraint | Same |
+| No overlapping bookings for a doctor | Application pre-check + B-tree unique constraint on `(doctor_id, start_at)` + GiST exclusion constraint on `(doctor_id, tstzrange)` | B-tree locks only the slot start key under concurrent races; GiST rejects partial range overlaps |
+| Patient not in two places at once | Application pre-check + B-tree unique constraint on `(patient_id, start_at)` + GiST exclusion constraint on `(patient_id, tstzrange)` | Same |
 | An appointment's doctor is a doctor and its patient is a patient | Database (foreign keys to the profile tables) | Free with the profile design |
 | Cancelled rows carry a cancellation time | Database (CHECK) | Cheap, keeps data consistent |
 | Doctor is accepting appointments | Application | A booking rule, not a data shape |
@@ -233,8 +234,8 @@ Each choice favours a stable system: the guarantees keep holding as slot lengths
 
 | Question | Chosen | Alternatives | Why the chosen option |
 | --- | --- | --- | --- |
-| How to stop double-booking? | Exclusion constraint on overlapping time ranges | Partial unique index on `(doctor_id, start_at)`; a nullable "active start" column with a plain unique constraint; application row locks only | A unique index catches only identical start times, so it breaks once slot lengths change or breaks fall off the 30-min grid. Moving to the exclusion constraint later would mean a full table lock and rewriting the overlap logic. The nullable column stores the start time twice. Row locks rely on every write path remembering them. |
-| Database guard or application only? | Both: application for clear messages, advisory locks per doctor and patient to serialize conflicting requests, database constraint as the final guard | Application only, with `SELECT … FOR UPDATE` on the doctor row; constraint only, without locks | One forgotten lock silently allows double-bookings, so the constraint stays as the fail-safe. Without the locks, concurrent conflicting inserts can deadlock inside the constraint check and return 500s. |
+| How to stop double-booking? | B-tree unique constraints on `(doctor_id, start_at)` and `(patient_id, start_at)` paired with GiST exclusion constraints on overlapping time ranges | Unique index alone; GiST exclusion constraint alone; application row/advisory locks on the whole doctor and patient | A unique index alone misses partial overlaps when slot lengths change. A GiST exclusion constraint alone checks conflicts after index insertion and can deadlock (`500`) under simultaneous inserts of the same slot. Putting the B-tree unique constraint ahead of the GiST exclusion constraint serializes same-slot races on the single `(doctor_id, start_at)` key without locking the whole doctor or patient row. |
+| Database guard or application only? | Both: application for clear messages, database constraints for concurrent races | Application only, with `SELECT … FOR UPDATE` on the doctor row | Row locks serialize unrelated bookings across the whole doctor and rely on every write path remembering them. Declarative constraints lock only the slot and cannot be bypassed. |
 | How to surface constraint errors? | Wrap in a domain error with `from exc`, map to 409 | Let the raw database error bubble up | A raw error is a 500 to the client, which breaks the brief, and it fills the APM tool with expected conflicts. Chaining keeps the full trace. |
 | Where do names and emails live? | On a custom user model, with doctor and patient profiles | Name and email columns on each of `doctors` and `patients`; one users table with a role column; Django multi-table inheritance | Identity is stored once and patient logins later need no data migration. A single table with a role column cannot guarantee `appointments.doctor_id` points at a doctor. Multi-table inheritance hides the join and makes one person holding both roles awkward. |
 | Login identifier | Email (`USERNAME_FIELD`), `username` removed | Keep Django's `username` and copy the email into it | One identifier, no duplicated value to keep in sync. Costs a small custom user manager. |
